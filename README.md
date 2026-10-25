@@ -6,6 +6,11 @@ El documento se define en JSON; el layout es HTML+CSS; el PDF lo renderiza Chrom
 **Professional quote/proposal PDFs from Python — no Word, no LibreOffice.**
 JSON in, print-ready PDF out.
 
+
+![Cotización de ejemplo renderizada a PDF desde un JSON](docs/example-output.png)
+
+<sub>Cotización de ejemplo renderizada a PDF desde un JSON · Example quotation rendered to PDF from a JSON file</sub>
+
 ---
 
 ## Por qué este enfoque
