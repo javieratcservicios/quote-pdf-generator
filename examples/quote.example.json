@@ -1,0 +1,80 @@
+{
+  "lang": "es",
+  "doc_label": "COTIZACIÓN",
+  "client_label": "Cliente",
+  "issuer_label": "Empresa Emisora",
+  "qty_header": "CANT.",
+  "desc_header": "CONCEPTO / DESCRIPCIÓN",
+  "unit_header": "P. UNITARIO",
+  "amount_header": "IMPORTE",
+  "subtotal_label": "Subtotal",
+  "total_label": "Total",
+
+  "brand": {
+    "name": "Estudio Ejemplo",
+    "legal_name": "ESTUDIO EJEMPLO S.A. DE C.V.",
+    "tax_id": "EEE010101ABC",
+    "address": "Av. Reforma 123, Col. Centro, CDMX, CP 06000",
+    "phone": "+52 55 1234 5678",
+    "email": "ventas@ejemplo.mx",
+    "city": "Ciudad de México",
+    "currency_symbol": "$",
+    "logo": "examples/logo.example.png"
+  },
+
+  "client": {
+    "name": "CLIENTE DEMOSTRACIÓN",
+    "legal_name": "Cliente Demostración S. de R.L.",
+    "tax_id": "CDE020202XYZ",
+    "address": "Calle Falsa 456, Parque Industrial, Monterrey, NL, CP 64000",
+    "attention": "Ing. Ana Martínez",
+    "site": "Planta Norte — Cuarto de máquinas"
+  },
+
+  "title": "Cotización de suministro e instalación de sistema de detección",
+  "margin": 0.30,
+
+  "tax": {
+    "rate": 0.16,
+    "label": "IVA"
+  },
+
+  "items": [
+    {
+      "qty": 1,
+      "description": "Detector de gas modelo DEMO-100, marca Ejemplo. Incluye soporte de montaje y manual.",
+      "price": 52000.00
+    },
+    {
+      "qty": 10,
+      "description": "Módulo de monitoreo modelo MOD-310 para integración al panel de control.",
+      "price": 1500.00
+    },
+    {
+      "qty": 1,
+      "description": "Mano de obra y materiales eléctricos para instalación y programación del sistema.",
+      "cost": 50400.00
+    }
+  ],
+
+  "conditions": {
+    "validity": "30 días a partir de la fecha de emisión",
+    "currency": "MXN (peso mexicano)",
+    "delivery": "3 a 4 semanas",
+    "payment": "Contado"
+  },
+
+  "notes": [
+    "Precios en pesos mexicanos, más IVA.",
+    "Tiempo de entrega sujeto a disponibilidad de importación.",
+    "Instalación en horario de planta, sin incluir trabajos en altura especializados."
+  ],
+
+  "thanks": "Agradecemos el tiempo y la oportunidad de presentarle esta propuesta. Nuestro objetivo es brindarle la solución más adecuada para sus instalaciones. Quedamos a su total disposición para revisar cualquier detalle técnico o comercial y afinar lo que sea necesario para avanzar.",
+
+  "closing": "Atentamente",
+  "signer_name": "Nombre del Vendedor",
+  "signer_role": "Gerencia Comercial",
+
+  "filename": "Cotizacion Ejemplo Deteccion"
+}

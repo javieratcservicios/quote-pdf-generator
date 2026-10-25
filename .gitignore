@@ -1,0 +1,38 @@
+# ─── Salidas generadas (no versionar) ───
+salida/
+output/
+*.pdf
+*.html
+!examples/*.html
+
+# ─── Configuraciones reales de clientes ───
+mi_*.json
+cotizacion_*.json
+!examples/*.json
+
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ─── Pruebas ───
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ─── Editores y sistema ───
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ─── Logs ───
+*.log
