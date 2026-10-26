@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime as dt
+import html as htmlmod
 import json
 import os
 import re
@@ -27,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
@@ -46,8 +48,31 @@ CHROME_CANDIDATES = [
 
 # ───────────────────────────── Utilidades ──────────────────────────────
 
-def money(value: float, symbol: str = "$") -> str:
-    return f"{symbol}{value:,.2f}"
+CENT = Decimal("0.01")
+
+
+def d(value) -> Decimal:
+    """Decimal exacto desde JSON (str() evita arrastrar el error del float)."""
+    return Decimal(str(value))
+
+
+def r2(value: Decimal) -> Decimal:
+    """Redondeo comercial a centavos: .5 siempre hacia arriba (no bancario)."""
+    return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def money(value, symbol: str = "$") -> str:
+    return f"{symbol}{r2(d(value)):,.2f}"
+
+
+def e(value) -> str:
+    """Escapa texto para HTML. Un '&' o '<' en una descripción rompía el PDF."""
+    return htmlmod.escape("" if value is None else str(value))
+
+
+def pct(rate: Decimal) -> str:
+    """0.16 → '16%', 0.105 → '10.5%'."""
+    return f"{(rate * 100).normalize():f}%"
 
 
 def find_browser() -> str | None:
@@ -61,12 +86,20 @@ def find_browser() -> str | None:
     return None
 
 
-def logo_data_uri(path: str | None) -> str:
-    """Convierte el logo a data URI para que el HTML sea autocontenido."""
+def logo_data_uri(path: str | None, base_dir: Path | None = None) -> str:
+    """
+    Convierte el logo a data URI para que el HTML sea autocontenido.
+
+    Una ruta relativa se busca primero junto al JSON de configuración y
+    luego en el directorio actual (compatibilidad con configs anteriores).
+    """
     if not path:
         return ""
     p = Path(path)
+    if not p.is_absolute() and base_dir and (base_dir / p).exists():
+        p = base_dir / p
     if not p.exists():
+        print(f"Aviso: no se encontró el logo {path}", file=sys.stderr)
         return ""
     suffix = p.suffix.lower().lstrip(".")
     mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -86,7 +119,7 @@ def make_folio(pattern: str = "%d%m%Y-XXXX") -> str:
     return pattern.replace("%d%m%Y", today).replace("XXXX", secrets.token_hex(2).upper())
 
 
-def compute_lines(items: list[dict], margin: float) -> tuple[list[dict], float]:
+def compute_lines(items: list[dict], margin) -> tuple[list[dict], Decimal]:
     """
     Calcula precio unitario e importe por partida.
 
@@ -98,27 +131,27 @@ def compute_lines(items: list[dict], margin: float) -> tuple[list[dict], float]:
     Con margin = 0.30 → precio = costo / 0.70
     """
     lines = []
-    subtotal = 0.0
-    divisor = 1.0 - margin
+    subtotal = Decimal("0")
+    divisor = 1 - d(margin)
     if divisor <= 0:
         raise SystemExit("El margen debe ser menor a 1.0 (por ejemplo 0.30 = 30%).")
 
     for item in items:
-        qty = float(item.get("qty", 1))
+        qty = d(item.get("qty", 1))
         desc = item["description"]
         if "price" in item:
-            unit = float(item["price"])
+            unit = d(item["price"])
         elif "cost" in item:
-            unit = float(item["cost"]) / divisor
+            unit = d(item["cost"]) / divisor
         else:
             raise SystemExit(f"Partida sin 'price' ni 'cost': {desc[:40]}")
 
-        unit = round(unit, 2)
-        amount = round(unit * qty, 2)
+        unit = r2(unit)
+        amount = r2(unit * qty)
         subtotal += amount
         lines.append({"qty": qty, "description": desc, "unit": unit, "amount": amount})
 
-    return lines, round(subtotal, 2)
+    return lines, r2(subtotal)
 
 
 # ───────────────────────────── HTML ────────────────────────────────────
@@ -126,6 +159,7 @@ def compute_lines(items: list[dict], margin: float) -> tuple[list[dict], float]:
 CSS = """
 @page { size: __PAGE_SIZE__; margin: __MARGIN__; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 body { font-family: __FONT__; color: #1f2430; font-size: 11.5px; }
 .head { display: flex; justify-content: space-between; align-items: center;
         border-bottom: 3px solid __ACCENT__; padding-bottom: 6px; }
@@ -199,132 +233,175 @@ def render_css(style: dict) -> str:
     return css
 
 
-def build_html(cfg: dict) -> tuple[str, str]:
-    """Devuelve (html, folio)."""
+DEFAULT_LABELS = {
+    "doc_label": "COTIZACIÓN",
+    "folio_label": "Folio",
+    "client_label": "Cliente",
+    "issuer_label": "Empresa Emisora",
+    "attention_label": "Atención",
+    "site_label": "Ubicación del servicio",
+    "legal_name_label": "Razón Social",
+    "tax_id_label": "RFC",
+    "qty_header": "CANT.",
+    "desc_header": "CONCEPTO / DESCRIPCIÓN",
+    "unit_header": "P. UNITARIO",
+    "amount_header": "IMPORTE",
+    "subtotal_label": "Subtotal",
+    "total_label": "Total",
+    "conditions_label": "Condiciones Comerciales",
+    "validity_label": "Vigencia",
+    "currency_label": "Moneda",
+    "delivery_label": "Tiempo de entrega",
+    "payment_label": "Términos de pago",
+    "closing": "Atentamente",
+    "date_format": "{city}, a {day} de {month} de {year}",
+}
+
+
+def build_html(cfg: dict, base_dir: Path | None = None) -> tuple[str, str]:
+    """
+    Devuelve (html, folio).
+
+    Todo texto que viene del JSON se escapa. La única excepción es
+    `annex_html`, que por diseño es HTML.
+    """
+    L = {k: cfg.get(k, v) for k, v in DEFAULT_LABELS.items()}
+    months = cfg.get("months", MESES)
     brand = cfg["brand"]
     client = cfg["client"]
     style = cfg.get("style", {})
     tax = cfg.get("tax", {})
     cond = cfg.get("conditions", {})
 
-    accent = style.get("accent", "#1A237E")
-    accent_soft = style.get("accent_soft", "#e8eaf6")
-    margin_pct = float(cfg.get("margin", 0.30))
-    tax_rate = float(tax.get("rate", 0.16))
+    sym = brand.get("currency_symbol", "$")
+    tax_rate = d(tax.get("rate", 0.16))
     tax_label = tax.get("label", "IVA")
 
-    lines, subtotal = compute_lines(cfg["items"], margin_pct)
-    tax_amount = round(subtotal * tax_rate, 2)
-    total = round(subtotal + tax_amount, 2)
+    lines, subtotal = compute_lines(cfg["items"], cfg.get("margin", 0.30))
+    tax_amount = r2(subtotal * tax_rate)
+    total = r2(subtotal + tax_amount)
 
     folio = cfg.get("folio") or make_folio(cfg.get("folio_pattern", "%d%m%Y-XXXX"))
     today = dt.date.today()
-    date_line = cfg.get("date_line") or (
-        f"{brand.get('city', '')}, a {today.day} de {MESES[today.month - 1]} de {today.year}"
+    date_line = cfg.get("date_line") or L["date_format"].format(
+        city=brand.get("city", ""), day=today.day,
+        month=months[today.month - 1], year=today.year,
     ).strip(", ")
 
+    def qty_text(q: Decimal) -> str:
+        return str(int(q)) if q == q.to_integral_value() else f"{q.normalize():f}"
+
     rows = "\n".join(
-        f'<tr><td class="c">{int(l["qty"]) if l["qty"] == int(l["qty"]) else l["qty"]}</td>'
-        f'<td>{l["description"]}</td>'
-        f'<td class="r">{money(l["unit"], brand.get("currency_symbol", "$"))}</td>'
-        f'<td class="r">{money(l["amount"], brand.get("currency_symbol", "$"))}</td></tr>'
+        f'<tr><td class="c">{qty_text(l["qty"])}</td>'
+        f'<td>{e(l["description"])}</td>'
+        f'<td class="r">{money(l["unit"], sym)}</td>'
+        f'<td class="r">{money(l["amount"], sym)}</td></tr>'
         for l in lines
     )
 
+    def party_lines(party: dict) -> str:
+        """Razón social, RFC y dirección: igual para cliente y emisor."""
+        out = ""
+        if party.get("legal_name"):
+            out += f'<p class="rs">{e(L["legal_name_label"])}: {e(party["legal_name"])}</p>'
+        if party.get("tax_id"):
+            out += f'<p>{e(L["tax_id_label"])}: {e(party["tax_id"])}</p>'
+        if party.get("address"):
+            out += f"<p>{e(party['address'])}</p>"
+        return out
+
     client_extra = ""
     if client.get("attention"):
-        client_extra += f'<p><b>Atención:</b> {client["attention"]}</p>'
-    if client.get("address"):
-        client_extra += f"<p>{client['address']}</p>"
+        client_extra += f'<p><b>{e(L["attention_label"])}:</b> {e(client["attention"])}</p>'
+    client_extra += party_lines(client)
     if client.get("site"):
-        client_extra += f'<p><b>Ubicación del servicio:</b> {client["site"]}</p>'
+        client_extra += f'<p><b>{e(L["site_label"])}:</b> {e(client["site"])}</p>'
 
-    issuer_lines = ""
-    for key in ("legal_name", "tax_id", "address", "phone", "email"):
+    issuer_lines = party_lines(brand)
+    for key in ("phone", "email"):
         if brand.get(key):
-            label = {"legal_name": "Razón Social: ", "tax_id": "RFC: "}.get(key, "")
-            cls = ' class="rs"' if key == "legal_name" else ""
-            issuer_lines += f"<p{cls}>{label}{brand[key]}</p>"
+            issuer_lines += f"<p>{e(brand[key])}</p>"
 
     notes_html = ""
     if cfg.get("notes"):
-        lis = "".join(f"<li>{n}</li>" for n in cfg["notes"])
+        lis = "".join(f"<li>{e(n)}</li>" for n in cfg["notes"])
         notes_html = f'<div class="notes"><ul>{lis}</ul></div>'
 
     anexo_html = ""
     if cfg.get("annex_html"):
         anexo_html = f'<div class="anexo">{cfg["annex_html"]}</div>'
 
-    logo = logo_data_uri(brand.get("logo"))
+    logo = logo_data_uri(brand.get("logo"), base_dir)
+    contact = " | ".join(e(brand[k]) for k in ("phone", "email") if brand.get(k))
 
     html = f"""<!DOCTYPE html>
-<html lang="{cfg.get('lang', 'es')}"><head><meta charset="utf-8">
-<title>{cfg.get('title', 'Cotización')} {folio}</title>
+<html lang="{e(cfg.get('lang', 'es'))}"><head><meta charset="utf-8">
+<title>{e(cfg.get('title', 'Cotización'))} {e(folio)}</title>
 <style>{render_css(style)}</style></head><body>
 
 <div class="head">
-  <div class="logo">{f'<img src="{logo}" alt="{brand.get("name","")}">' if logo else ''}</div>
+  <div class="logo">{f'<img src="{logo}" alt="{e(brand.get("name", ""))}">' if logo else ''}</div>
   <div class="head-right">
-    <h1>{cfg.get('doc_label', 'COTIZACIÓN')}</h1>
-    <div class="folio">Folio: {folio}</div>
-    <div class="cont">{brand.get('phone','')}{' | ' if brand.get('phone') and brand.get('email') else ''}{brand.get('email','')}</div>
+    <h1>{e(L['doc_label'])}</h1>
+    <div class="folio">{e(L['folio_label'])}: {e(folio)}</div>
+    <div class="cont">{contact}</div>
   </div>
 </div>
 
-<div class="fecha">{date_line}</div>
+<div class="fecha">{e(date_line)}</div>
 
 <div class="bloques">
   <div class="bloque">
-    <h3>{cfg.get('client_label', 'Cliente')}</h3>
-    <p class="rs">{client['name']}</p>
+    <h3>{e(L['client_label'])}</h3>
+    <p class="rs">{e(client['name'])}</p>
     {client_extra}
   </div>
   <div class="bloque">
-    <h3>{cfg.get('issuer_label', 'Empresa Emisora')}</h3>
-    <p class="rs">{brand['name']}</p>
+    <h3>{e(L['issuer_label'])}</h3>
+    <p class="rs">{e(brand['name'])}</p>
     {issuer_lines}
   </div>
 </div>
 
-<div class="titulo">{cfg['title']}</div>
+<div class="titulo">{e(cfg['title'])}</div>
 
 <table class="items">
   <tr>
-    <th class="c" style="width:7%">{cfg.get('qty_header', 'CANT.')}</th>
-    <th>{cfg.get('desc_header', 'CONCEPTO / DESCRIPCIÓN')}</th>
-    <th class="c" style="width:15%">{cfg.get('unit_header', 'P. UNITARIO')}</th>
-    <th class="c" style="width:15%">{cfg.get('amount_header', 'IMPORTE')}</th>
+    <th class="c" style="width:7%">{e(L['qty_header'])}</th>
+    <th>{e(L['desc_header'])}</th>
+    <th class="c" style="width:15%">{e(L['unit_header'])}</th>
+    <th class="c" style="width:15%">{e(L['amount_header'])}</th>
   </tr>
   {rows}
 </table>
 
 <table class="totales">
-  <tr><td class="label">{cfg.get('subtotal_label', 'Subtotal')}:</td>
-      <td class="r">{money(subtotal, brand.get('currency_symbol', '$'))}</td></tr>
-  <tr><td class="label">{tax_label} ({tax_rate:.0%}):</td>
-      <td class="r">{money(tax_amount, brand.get('currency_symbol', '$'))}</td></tr>
-  <tr class="gran"><td class="label">{cfg.get('total_label', 'Total')}:</td>
-      <td class="r">{money(total, brand.get('currency_symbol', '$'))}</td></tr>
+  <tr><td class="label">{e(L['subtotal_label'])}:</td>
+      <td class="r">{money(subtotal, sym)}</td></tr>
+  <tr><td class="label">{e(tax_label)} ({pct(tax_rate)}):</td>
+      <td class="r">{money(tax_amount, sym)}</td></tr>
+  <tr class="gran"><td class="label">{e(L['total_label'])}:</td>
+      <td class="r">{money(total, sym)}</td></tr>
 </table>
 
 {notes_html}
 
 <div class="cond avoid">
-  <h3>{cfg.get('conditions_label', 'Condiciones Comerciales')}</h3>
+  <h3>{e(L['conditions_label'])}</h3>
   <div class="grid">
-    <div class="cell"><b>{cfg.get('validity_label', 'Vigencia')}</b>{cond.get('validity', '30 días')}</div>
-    <div class="cell"><b>{cfg.get('currency_label', 'Moneda')}</b>{cond.get('currency', 'MXN')}</div>
-    <div class="cell"><b>{cfg.get('delivery_label', 'Tiempo de entrega')}</b>{cond.get('delivery', 'Por confirmar')}</div>
-    <div class="cell"><b>{cfg.get('payment_label', 'Términos de pago')}</b>{cond.get('payment', 'Por confirmar')}</div>
+    <div class="cell"><b>{e(L['validity_label'])}</b>{e(cond.get('validity', '30 días'))}</div>
+    <div class="cell"><b>{e(L['currency_label'])}</b>{e(cond.get('currency', 'MXN'))}</div>
+    <div class="cell"><b>{e(L['delivery_label'])}</b>{e(cond.get('delivery', 'Por confirmar'))}</div>
+    <div class="cell"><b>{e(L['payment_label'])}</b>{e(cond.get('payment', 'Por confirmar'))}</div>
   </div>
 </div>
 
-<div class="thanks">{cfg.get('thanks', '')}</div>
+<div class="thanks">{e(cfg.get('thanks', ''))}</div>
 
 <div class="sign avoid">
-  <div class="atent">{cfg.get('closing', 'Atentamente')}</div>
-  <div class="name">{cfg.get('signer_name', brand.get('name', ''))}</div>
-  <div class="role">{cfg.get('signer_role', '')}</div>
+  <div class="atent">{e(L['closing'])}</div>
+  <div class="name">{e(cfg.get('signer_name', brand.get('name', '')))}</div>
+  <div class="role">{e(cfg.get('signer_role', ''))}</div>
 </div>
 
 {anexo_html}
@@ -335,7 +412,7 @@ def build_html(cfg: dict) -> tuple[str, str]:
 
 # ───────────────────────────── PDF ─────────────────────────────────────
 
-def html_to_pdf(html_path: Path, pdf_path: Path, page_size: str = "Letter") -> bool:
+def html_to_pdf(html_path: Path, pdf_path: Path) -> bool:
     """
     Renderiza con Chrome/Edge headless.
 
@@ -349,7 +426,9 @@ def html_to_pdf(html_path: Path, pdf_path: Path, page_size: str = "Letter") -> b
         return False
 
     tmp_pdf = Path(tempfile.gettempdir()) / f"_quote_{secrets.token_hex(4)}.pdf"
-    profile = Path(tempfile.gettempdir()) / "quote_pdf_profile"
+    # Perfil propio por corrida: con uno fijo, dos cotizaciones generadas
+    # al mismo tiempo chocaban por el candado del perfil de Chrome.
+    profile = Path(tempfile.mkdtemp(prefix="quote_pdf_profile_"))
 
     cmd = [
         browser,
@@ -360,7 +439,13 @@ def html_to_pdf(html_path: Path, pdf_path: Path, page_size: str = "Letter") -> b
         f"--print-to-pdf={tmp_pdf}",
         html_path.resolve().as_uri(),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        print("ERROR: Chrome tardó más de 3 minutos y se canceló.", file=sys.stderr)
+        return False
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
 
     if tmp_pdf.exists() and tmp_pdf.stat().st_size > 0:
         pdf_path.parent.mkdir(parents=True, exist_ok=True)
@@ -388,7 +473,7 @@ def main() -> int:
         return 1
 
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    html, folio = build_html(cfg)
+    html, folio = build_html(cfg, base_dir=cfg_path.resolve().parent)
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -405,7 +490,7 @@ def main() -> int:
         print(f"Folio: {folio}")
         return 0
 
-    ok = html_to_pdf(html_path, pdf_path, cfg.get("style", {}).get("page_size", "Letter"))
+    ok = html_to_pdf(html_path, pdf_path)
     if ok:
         print(f"PDF : {pdf_path} ({pdf_path.stat().st_size:,} bytes)")
         print(f"Folio: {folio}")
