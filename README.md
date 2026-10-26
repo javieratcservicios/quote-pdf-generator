@@ -166,6 +166,21 @@ Puedes mezclar ambos en la misma cotización. Así el margen nunca se te va de l
 - **Texto seguro.** Todo lo que viene del JSON se escapa (un `&` o `<` en una descripción ya no rompe el documento). La única excepción es `annex_html`, que es HTML a propósito.
 - **Dinero exacto.** Los importes se calculan con `Decimal` y redondeo comercial (0.5 hacia arriba), no con `float`.
 
+## Antes de usarlo en producción
+
+> **Pruébalo una vez en tu equipo. No lo des por bueno solo porque las pruebas pasen.**
+
+Las pruebas automatizadas cubren el cálculo de importes, el escape de HTML y la estructura del documento, pero **no cubren el paso final de renderizado**: que Chrome realmente escriba el PDF en tu máquina. Ese paso depende del navegador instalado, de la ruta al binario, del directorio temporal y de las fuentes disponibles.
+
+Está comprobado funcionando correctamente, **pero puede variar si se instala en otro sistema operativo** o en otro equipo, sobre todo en Windows, donde Chrome falla en silencio si no puede escribir en el destino.
+
+Antes de emitir una cotización real:
+
+1. Genera un PDF de ejemplo: `python quote_pdf.py --config examples/quote.example.json --out output/`
+2. Ábrelo y confirma que trae logo, folio, datos del cliente, importes y desglose de IVA.
+3. Si usas una fuente del sistema, verifica que existe en esa máquina.
+4. Ajusta lo que haga falta según tu entorno.
+
 ## Licencia
 
 MIT — ver [LICENSE](LICENSE).
@@ -182,6 +197,8 @@ Generates business quote PDFs from a JSON definition. The layout is HTML+CSS ren
 - Optional technical annex on its own page
 - Self-contained HTML (logo embedded as data URI)
 - Works on Windows, Linux and macOS — auto-detects Chrome/Edge, or set `BROWSER_BIN`
+
+> **Test it once on your machine before relying on it.** The automated tests cover amount math, HTML escaping and document structure, but they do **not** cover the final render step: Chrome actually writing the PDF on your computer. It is verified working, but behaviour may differ on another operating system or machine — especially on Windows, where Chrome fails silently when it cannot write to the target path. Generate the example PDF and open it before issuing a real quote.
 
 ```bash
 python quote_pdf.py --config examples/quote.example.json --out output/
