@@ -31,14 +31,14 @@ Este proyecto va por el tercero. La plantilla es CSS: si quieres otro color, otr
 - **Impuesto configurable** — IVA 16% por defecto, pero acepta cualquier tasa y cualquier etiqueta
 - **Folio automático** — patrón `DDMMAAAA-XXXX` o el que definas
 - **Anexo técnico opcional** — hoja aparte con salto de página, sin pelear con el layout
-- **Logo embebido como data URI** — el HTML es autocontenido, funciona sin rutas relativas
+- **Logo embebido como data URI** — el HTML es autocontenido; la ruta del logo se resuelve junto al JSON, así que funciona desde cualquier carpeta
 - **Multi-moneda y multi-idioma** — los encabezados de tabla y etiquetas son configurables
 - **Windows, Linux y macOS** — detecta Chrome o Edge, o usa `BROWSER_BIN`
 
 ## Instalación
 
 ```bash
-git clone https://github.com/TU_USUARIO/quote-pdf-generator.git
+git clone https://github.com/javieratcservicios/quote-pdf-generator.git
 cd quote-pdf-generator
 # Sin dependencias. Solo necesitas Chrome, Chromium o Edge instalado.
 python quote_pdf.py --config examples/quote.example.json --out salida/
@@ -135,14 +135,20 @@ Puedes mezclar ambos en la misma cotización. Así el margen nunca se te va de l
 }
 ```
 
-**Etiquetas del documento** — para cotizar en otro idioma o con otra nomenclatura:
+**Etiquetas del documento** — para cotizar en otro idioma o con otra nomenclatura. Todas las etiquetas visibles son configurables, incluida la fecha:
 
 ```json
 "doc_label": "PROPOSAL",
+"folio_label": "No.",
 "client_label": "Bill To",
+"attention_label": "Attn",
+"legal_name_label": "Legal name",
+"tax_id_label": "Tax ID",
 "qty_header": "QTY",
 "desc_header": "DESCRIPTION",
-"subtotal_label": "Subtotal"
+"date_format": "{city}, {month} {day}, {year}",
+"months": ["January", "February", "March", "April", "May", "June",
+           "July", "August", "September", "October", "November", "December"]
 ```
 
 **Anexo técnico** — HTML puro, con salto de página automático:
@@ -156,7 +162,9 @@ Puedes mezclar ambos en la misma cotización. Así el margen nunca se te va de l
 - **El truco del PDF temporal.** En Windows, Chrome a veces no puede escribir el PDF en ciertos directorios y falla **en silencio** (`exit 0`, sin archivo). Este script escribe primero en `tempfile.gettempdir()` y luego lo mueve. Si lo modificas, conserva ese paso.
 - **Perfil de Chrome propio.** Se usa `--user-data-dir` en un directorio temporal; con el perfil por defecto Chrome falla con `0x3` en algunos equipos.
 - **Fuentes.** Si usas una fuente del sistema, tiene que existir en la máquina que renderiza. Para portabilidad total, usa una fuente web o las genéricas (`Segoe UI`, `Arial`, `Helvetica`).
-- **Fondos.** `-webkit-print-color-adjust: exact` ya está aplicado vía impresión normal; si los colores de fondo no salen, verifica "Gráficos de fondo" en la configuración de impresión de Chrome.
+- **Fondos.** La plantilla aplica `print-color-adjust: exact`, así que los encabezados de color salen en el PDF. Si imprimes el HTML a mano desde el navegador, activa "Gráficos de fondo".
+- **Texto seguro.** Todo lo que viene del JSON se escapa (un `&` o `<` en una descripción ya no rompe el documento). La única excepción es `annex_html`, que es HTML a propósito.
+- **Dinero exacto.** Los importes se calculan con `Decimal` y redondeo comercial (0.5 hacia arriba), no con `float`.
 
 ## Licencia
 

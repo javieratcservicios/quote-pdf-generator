@@ -19,7 +19,7 @@
     "email": "ventas@ejemplo.mx",
     "city": "Ciudad de México",
     "currency_symbol": "$",
-    "logo": "examples/logo.example.png"
+    "logo": "logo.example.png"
   },
 
   "client": {
